@@ -6,7 +6,7 @@
 *Read this in [English](README_en.md).*
 
 ## 软件依赖
-运行微调需要4.27.1版本的`transformers`。除 ChatGLM-6B 的依赖之外，还需要按照以下依赖
+运行微调需要4.27.1版本的`transformers`。除 ChatGLM-6B 的依赖之外，还需要安装以下依赖
 ```
 pip install rouge_chinese nltk jieba datasets
 ```
@@ -25,6 +25,9 @@ ADGEN 数据集任务为根据输入（content）生成一段广告词（summary
 从 [Google Drive](https://drive.google.com/file/d/13_vf0xRTQsyneRKdD1bZIr93vBGOczrk/view?usp=sharing) 或者 [Tsinghua Cloud](https://cloud.tsinghua.edu.cn/f/b3f119a008264b1cabd1/?dl=1) 下载处理好的 ADGEN 数据集，将解压后的 `AdvertiseGen` 目录放到本目录下。
 
 ### 训练
+
+#### P-tuning v2
+
 运行以下指令进行训练：
 ```shell
 bash train.sh
@@ -33,11 +36,31 @@ bash train.sh
 
 在默认配置 `quantization_bit=4`、`per_device_train_batch_size=1`、`gradient_accumulation_steps=16` 下，INT4 的模型参数被冻结，一次训练迭代会以 1 的批处理大小进行 16 次累加的前后向传播，等效为 16 的总批处理大小，此时最低只需 6.7G 显存。若想在同等批处理大小下提升训练效率，可在二者乘积不变的情况下，加大 `per_device_train_batch_size` 的值，但也会带来更多的显存消耗，请根据实际情况酌情调整。
 
+#### Finetune
+
+如果需要进行全参数的 Finetune，需要安装 [Deepspeed](https://github.com/microsoft/DeepSpeed)，然后运行以下指令：
+
+```shell
+bash ds_train_finetune.sh
+```
+
 ### 推理
 
 将 `evaluate.sh` 中的 `CHECKPOINT` 更改为训练时保存的 checkpoint 名称，运行以下指令进行模型推理和评测：
 ```shell
 bash evaluate.sh
+```
+**[2023/04/10更新]** 在 P-tuning v2 训练时模型只保存 PrefixEncoder 部分的参数，所以在推理时需要同时加载原 ChatGLM-6B 模型以及 PrefixEncoder 的权重，因此需要指定参数（已更新 `evaluate.sh`） ：
+
+```shell
+--model_name_or_path THUDM/chatglm-6b
+--ptuning_checkpoint $CHECKPOINT_PATH
+```
+
+仍然兼容旧版全参保存的 Checkpoint，只需要跟之前一样设定 `model_name_or_path`：
+
+```shell
+--model_name_or_path $CHECKPOINT_PATH
 ```
 
 评测指标为中文 Rouge score 和 BLEU-4。生成的结果保存在
@@ -59,13 +82,13 @@ bash evaluate.sh
 
 ### 评估结果
 
-|               | P-tuning v2 | LoRA  |
-| ------------- | ----------- | ----- |
-| BLEU-4        | 7.78        | 6.25  |
-| Rouge-1       | 31.34       | 28.58 |
-| Rouge-2       | 7.34        | 4.42  |
-| Rouge-l       | 25.26       | 17.56 |
-| Training Loss | 3.80      | 3.36  |
+|               | Finetune | P-tuning v2 | LoRA |
+| ------------- | ----------- | ----- | ------------- |
+| BLEU-4        | 8.01    | 8.10 | 7.62 |
+| Rouge-1       | 31.23  | 31.12 | 30.60 |
+| Rouge-2       | 7.36    | 7.11 | 6.96 |
+| Rouge-l       | 25.08  | 24.97 | 24.80 |
+| Training Loss | 3.00 | 3.74 | 3.32 |
 
 
 
@@ -74,8 +97,6 @@ bash evaluate.sh
  ```
 max_source_length=64
 max_target_length=64
-per_device_train_batch_size=1
-gradient_accumulation_steps=16
 max_steps=3000
  ```
 
@@ -85,15 +106,29 @@ max_steps=3000
 pre_seq_len=128
 learning_rate=2e-2
 quantization_bit=4
+per_device_train_batch_size=16
+gradient_accumulation_steps=1
+```
+
+##### Finetune
+
+```
+learning_rate=1e-4
+fp16
+num_gpus=4
+per_device_train_batch_size=4
+gradient_accumulation_steps=1
 ```
 
 ##### LoRA
 
+实现采用的是 [simple_thu_chatglm6b](https://github.com/yuanzhoulvpi2017/zero_nlp/tree/main/simple_thu_chatglm6b)
+
 ```
 learning_rate=5e-4
+per_device_train_batch_size=1
+gradient_accumulation_steps=16
 ```
-
-实现采用的是 [simple_thu_chatglm6b](https://github.com/yuanzhoulvpi2017/zero_nlp/tree/main/simple_thu_chatglm6b)
 
 
 
@@ -158,7 +193,7 @@ bash train_chat.sh
 
 ## TODO
 * [x] Support for chat data
-* [ ] Support for full finetuning
+* [x] Support for full finetuning
 
 ## 引用
 
@@ -171,4 +206,5 @@ bash train_chat.sh
   year={2022}
 }
 ```
+
 
