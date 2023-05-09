@@ -3,7 +3,7 @@
 
 下面以 [ADGEN](https://aclanthology.org/D19-1321.pdf) (广告生成) 数据集为例介绍代码的使用方法。
 
-*Read this in [English](README_en.md).*
+*Read this in [English](README_en.md).
 
 ## 软件依赖
 运行微调需要4.27.1版本的`transformers`。除 ChatGLM-6B 的依赖之外，还需要安装以下依赖
@@ -26,7 +26,7 @@ ADGEN 数据集任务为根据输入（content）生成一段广告词（summary
 
 ### 训练
 
-#### P-tuning v2
+#### P-Tuning v2
 
 运行以下指令进行训练：
 ```shell
@@ -35,6 +35,8 @@ bash train.sh
 `train.sh` 中的 `PRE_SEQ_LEN` 和 `LR` 分别是 soft prompt 长度和训练的学习率，可以进行调节以取得最佳的效果。P-Tuning-v2 方法会冻结全部的模型参数，可通过调整 `quantization_bit` 来被原始模型的量化等级，不加此选项则为 FP16 精度加载。
 
 在默认配置 `quantization_bit=4`、`per_device_train_batch_size=1`、`gradient_accumulation_steps=16` 下，INT4 的模型参数被冻结，一次训练迭代会以 1 的批处理大小进行 16 次累加的前后向传播，等效为 16 的总批处理大小，此时最低只需 6.7G 显存。若想在同等批处理大小下提升训练效率，可在二者乘积不变的情况下，加大 `per_device_train_batch_size` 的值，但也会带来更多的显存消耗，请根据实际情况酌情调整。
+
+如果你想要[从本地加载模型](../README_en.md#load-the-model-locally)，可以将 `train.sh` 中的 `THUDM/chatglm-6b` 改为你本地的模型路径。
 
 #### Finetune
 
@@ -46,11 +48,7 @@ bash ds_train_finetune.sh
 
 ### 推理
 
-将 `evaluate.sh` 中的 `CHECKPOINT` 更改为训练时保存的 checkpoint 名称，运行以下指令进行模型推理和评测：
-```shell
-bash evaluate.sh
-```
-**[2023/04/10更新]** 在 P-tuning v2 训练时模型只保存 PrefixEncoder 部分的参数，所以在推理时需要同时加载原 ChatGLM-6B 模型以及 PrefixEncoder 的权重，因此需要指定参数（已更新 `evaluate.sh`） ：
+在 P-tuning v2 训练时模型只保存 PrefixEncoder 部分的参数，所以在推理时需要同时加载原 ChatGLM-6B 模型以及 PrefixEncoder 的权重，因此需要指定 `evaluate.sh` 中的参数：
 
 ```shell
 --model_name_or_path THUDM/chatglm-6b
@@ -94,11 +92,11 @@ bash evaluate.sh
 
 #### 实验设置
 
- ```
+```
 max_source_length=64
 max_target_length=64
 max_steps=3000
- ```
+```
 
 ##### P-tuning v2
 
@@ -126,74 +124,78 @@ gradient_accumulation_steps=1
 
 ```
 learning_rate=5e-4
-per_device_train_batch_size=1
-gradient_accumulation_steps=16
+per_device_train_batch_size=16
+gradient_accumulation_steps=1
 ```
 
-
-
 ## 模型部署
-将对应的demo或代码中的`THUDM/chatglm-6b`换成经过 P-Tuning 微调之后 checkpoint 的地址（在示例中为 `./output/adgen-chatglm-6b-pt-8-1e-2/checkpoint-3000`）。注意，目前的微调还不支持多轮数据，所以只有对话第一轮的回复是经过微调的。
+首先载入Tokenizer：
+
+```python
+from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+# 载入Tokenizer
+tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
+```
+
+1. 如果需要加载的是新 Checkpoint（只包含 PrefixEncoder 参数）：
+
+```python
+config = AutoConfig.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True, pre_seq_len=128)
+model = AutoModel.from_pretrained("THUDM/chatglm-6b", config=config, trust_remote_code=True)
+prefix_state_dict = torch.load(os.path.join(CHECKPOINT_PATH, "pytorch_model.bin"))
+new_prefix_state_dict = {}
+for k, v in prefix_state_dict.items():
+    if k.startswith("transformer.prefix_encoder."):
+        new_prefix_state_dict[k[len("transformer.prefix_encoder."):]] = v
+model.transformer.prefix_encoder.load_state_dict(new_prefix_state_dict)
+```
+注意你可能需要将 `pre_seq_len` 改成你训练时的实际值。如果你是[从本地加载模型](https://github.com/THUDM/ChatGLM-6B#%E4%BB%8E%E6%9C%AC%E5%9C%B0%E5%8A%A0%E8%BD%BD%E6%A8%A1%E5%9E%8B)的话，需要将 `THUDM/chatglm-6b` 改成本地的模型路径（注意不是checkpoint路径）。
+
+2. 如果需要加载的是旧 Checkpoint（包含 ChatGLM-6B 以及 PrefixEncoder 参数），或者进行的是全参数微调，则直接加载整个 Checkpoint：
+
+```python
+model = AutoModel.from_pretrained(CHECKPOINT_PATH, trust_remote_code=True)
+```
+
+之后根据需求可以进行量化，也可以直接使用：
+
+```python
+# Comment out the following line if you don't use quantization
+model = model.quantize(4)
+model = model.half().cuda()
+model.transformer.prefix_encoder.float()
+model = model.eval()
+
+response, history = model.chat(tokenizer, "你好", history=[])
+```
+
+**[23/04/19]** 你也可以直接运行支持加载 P-Tuning v2 checkpoint 的 [web demo](./web_demo.py)
+```shell
+bash web_demo.sh
+```
+可能需要修改 [web_demo.sh](./web_demo.sh) 的内容以符合你实际的 checkpoint 情况。
 
 ## 使用自己的数据集
-修改 `train.sh` 和 `evaluate.sh` 中的 `train_file`、`validation_file`和`test_file`为你自己的 JSON 格式数据集路径，并将 `prompt_column` 和 `response_column` 改为 JSON 文件中输入文本和输出文本对应的 KEY。
+修改 `train.sh` 和 `evaluate.sh` 中的 `train_file`、`validation_file`和`test_file`为你自己的 JSON 格式数据集路径，并将 `prompt_column` 和 `response_column` 改为 JSON 文件中输入文本和输出文本对应的 KEY。可能还需要增大 `max_source_length` 和 `max_target_length` 来匹配你自己的数据集中的最大输入输出长度。
 
 ## 对话数据集
 
-如需要使用多轮对话数据对模型进行微调，可以提供聊天历史，例如
+如需要使用多轮对话数据对模型进行微调，可以提供聊天历史，例如以下是一个三轮对话的训练数据：
 
-```json
-{
-    "prompt": "是的。上下水管都好的",
-    "response": "那就要检查线路了，一般风扇继电器是由电脑控制吸合的，如果电路存在断路，或者电脑坏了的话会出现继电器不吸合的情况！",
-    "history": [
-        [
-            "长城h3风扇不转。继电器好的。保险丝好的传感器新的风扇也新的这是为什么。就是继电器缺一个信号线",
-            "用电脑能读数据流吗？水温多少"
-        ],
-        [
-            "95",
-            "上下水管温差怎么样啊？空气是不是都排干净了呢？"
-        ]
-    ]
-}
+```json lines
+{"prompt": "长城h3风扇不转。继电器好的。保险丝好的传感器新的风扇也新的这是为什么。就是继电器缺一个信号线", "response": "用电脑能读数据流吗？水温多少", "history": []}
+{"prompt": "95", "response": "上下水管温差怎么样啊？空气是不是都排干净了呢？", "history": [["长城h3风扇不转。继电器好的。保险丝好的传感器新的风扇也新的这是为什么。就是继电器缺一个信号线", "用电脑能读数据流吗？水温多少"]]}
+{"prompt": "是的。上下水管都好的", "response": "那就要检查线路了，一般风扇继电器是由电脑控制吸合的，如果电路存在断路，或者电脑坏了的话会出现继电器不吸合的情况！", "history": [["长城h3风扇不转。继电器好的。保险丝好的传感器新的风扇也新的这是为什么。就是继电器缺一个信号线", "用电脑能读数据流吗？水温多少"], ["95", "上下水管温差怎么样啊？空气是不是都排干净了呢？"]]}
 ```
 
-训练时需要指定 `--history_column` 为数据中聊天历史的 key（在此例子中是 `history`），将自动把聊天历史拼接，例如：
-
-- Input
-
-  ```
-  [Round 0]
-  问:长城h3风扇不转。继电器好的。保险丝好的传感器新的风扇也新的这是为什么。就是继电器缺一个信号线
-  答:用电脑能读数据流吗?水温多少
-  [Round 1]
-  问:95
-  答:上下水管温差怎么样啊?空气是不是都排干净了呢?
-  [Round 2]
-  问:是的。上下水管都好的
-  答:
-  ```
-
-- Label
-
-  ```
-  那就要检查线路了,一般风扇继电器是由电脑控制吸合的,如果电路存在断路,或者电脑坏了的话会出现继电器不吸合的情况!
-  ```
-
-要注意超过输入长度 `max_source_length` 的内容会被截。
+训练时需要指定 `--history_column` 为数据中聊天历史的 key（在此例子中是 `history`），将自动把聊天历史拼接。要注意超过输入长度 `max_source_length` 的内容会被截断。
 
 可以参考以下指令：
 
 ```shell
 bash train_chat.sh
 ```
-
-
-
-## TODO
-* [x] Support for chat data
-* [x] Support for full finetuning
 
 ## 引用
 
@@ -206,5 +208,6 @@ bash train_chat.sh
   year={2022}
 }
 ```
+
 
 
