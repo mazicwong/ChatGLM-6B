@@ -87,22 +87,47 @@ def main():
     # Load dataset
     data_files = {}
     if data_args.train_file is not None:
+        # /apdcephfs/share_1443437/zhiqihuang/MRC_Competition_Dureader/main/data_game/shediao/speaker/test.json
         data_files["train"] = data_args.train_file
-        extension = data_args.train_file.split(".")[-1]
     if data_args.validation_file is not None:
         data_files["validation"] = data_args.validation_file
-        extension = data_args.validation_file.split(".")[-1]
     if data_args.test_file is not None:
         data_files["test"] = data_args.test_file
-        extension = data_args.test_file.split(".")[-1]
 
-    # import pdb; pdb.set_trace()
-    raw_datasets = load_dataset(
-        extension,
-        data_files=data_files,
-        cache_dir=model_args.cache_dir,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    def text2json():
+        res = {"train": [], "test": []}
+        p = "/apdcephfs/share_1443437/zhiqihuang/MRC_Competition_Dureader/main/data_game/shediao/speaker/"
+        data = {"train": [], "test": []}
+        with open(p + "test.json", 'r') as fr:
+            lines = json.load(fr)
+            tmp = json.load(fr)
+            for k, v in tmp.items():
+                if v["novel"] == "射雕英雄传":
+                    entity, quote = v["entity"], v["quote"]
+                    context_pre, context_next = ''.join(v["context_pre"]), ''.join(v["context_next"])
+                # data["test"] += [{"text": context_pre + entity + context_next, "label": quote}]
+                data["test"] += [{"text": quote, "label": entity}]
+        with open("./data/train.json", 'w') as fw:
+            json.dump(res['train'], fw)
+        with open("./data/test.json", "w") as fw:
+            json.dump(res['test'], fw)
+        return res
+
+    text2json()
+    raw_datasets = load_dataset("json", data_files=data_files)
+    import pdb; pdb.set_trace()
+    """
+    DatasetDict({
+        train: Dataset({
+            features: ['content', 'summary', 'character'],
+            num_rows: 8852
+        })
+        validation: Dataset({
+            features: ['content', 'summary', 'character'],
+            num_rows: 1694
+        })
+    })
+    """
 
     # Load pretrained model and tokenizer
     config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
