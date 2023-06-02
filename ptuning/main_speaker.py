@@ -95,25 +95,24 @@ def main():
         data_files["test"] = data_args.test_file
 
     def text2json():
-        res = {"train": [], "test": []}
         p = "/apdcephfs/share_1443437/zhiqihuang/MRC_Competition_Dureader/main/data_game/shediao/speaker/"
         data = {"train": [], "test": []}
         with open(p + "test.json", 'r') as fr:
-            lines = json.load(fr)
             tmp = json.load(fr)
             for k, v in tmp.items():
                 if v["novel"] == "射雕英雄传":
                     entity, quote = v["entity"], v["quote"]
                     context_pre, context_next = ''.join(v["context_pre"]), ''.join(v["context_next"])
-                # data["test"] += [{"text": context_pre + entity + context_next, "label": quote}]
-                data["test"] += [{"text": quote, "label": entity}]
-        with open("./data/train.json", 'w') as fw:
-            json.dump(res['train'], fw)
-        with open("./data/test.json", "w") as fw:
-            json.dump(res['test'], fw)
-        return res
+                    # data["test"] += [{"text": context_pre + entity + context_next, "label": quote}]
+                    data["test"] += [{"text": quote, "label": entity}]
+        with open("../data/train.json", 'w') as fw:
+            json.dump(data['train'], fw)
+        with open("../data/test.json", "w") as fw:
+            json.dump(data['test'], fw)
+        return data
 
     text2json()
+    data_files = {"train": "../data/train.json", "test": "../data/test.json"}
     raw_datasets = load_dataset("json", data_files=data_files)
     import pdb; pdb.set_trace()
     """
